@@ -158,6 +158,7 @@ class RAGPipeline:
     ) -> Tuple[str, List[DocumentSource]]:
         """
         Format retrieved chunks into context string.
+        DO NOT include source markers - sources are handled separately.
         
         Args:
             chunks_with_scores: List of (Chunk, score) tuples
@@ -166,24 +167,20 @@ class RAGPipeline:
             Tuple of (context_string, list of sources)
         """
         if not chunks_with_scores:
-            return "Aucun contexte pertinent trouvé.", []
+            return "Aucun document pertinent trouvé dans la base de connaissances.", []
         
         context_parts = []
         sources = []
         
-        for chunk, score in chunks_with_scores:
+        for i, (chunk, score) in enumerate(chunks_with_scores, 1):
             filename = chunk.chunk_metadata.get("original_filename", chunk.chunk_metadata.get("filename", "Unknown"))
             page = chunk.page_number
             
-            # Format context entry
-            source_ref = f"[Source: {filename}"
-            if page:
-                source_ref += f", page {page}"
-            source_ref += "]"
+            # Format context WITHOUT source markers - just the content
+            # Number each excerpt for clarity
+            context_parts.append(f"--- Extrait {i} ---\n{chunk.content}")
             
-            context_parts.append(f"{source_ref}\n{chunk.content}")
-            
-            # Create source object
+            # Create source object (displayed separately in frontend)
             sources.append(DocumentSource(
                 type="document",
                 title=filename,

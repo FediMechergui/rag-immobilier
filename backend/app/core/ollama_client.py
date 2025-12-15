@@ -2,6 +2,7 @@
 Ollama client wrapper for LangChain integration.
 """
 import httpx
+import re
 from typing import Optional, AsyncGenerator, Dict, Any, List
 from langchain_community.llms import Ollama
 from langchain_community.chat_models import ChatOllama
@@ -13,6 +14,20 @@ from app.core.config import get_settings
 
 logger = structlog.get_logger()
 settings = get_settings()
+
+# Stop sequences to prevent repetition and hallucination
+STOP_SEQUENCES = [
+    "</s>",
+    "[/INST]",
+    "\n\nQuestion:",
+    "\n\nQUESTION:",
+    "\n\nHuman:",
+    "\n\nUser:",
+    "--- Extrait",  # Stop if model tries to repeat context
+    "\n\nCONTEXTE",
+    "\n\nSi vous avez",  # Common repetition pattern
+    "En suivant ces",  # Another common ending
+]
 
 
 class OllamaClient:
@@ -41,8 +56,9 @@ class OllamaClient:
             model=self.model,
             base_url=self.base_url,
             temperature=self.temperature,
-            num_predict=1024,  # Max tokens to generate (prevent infinite loops)
-            stop=["</s>", "[/INST]", "\n\nQuestion:", "\n\nQUESTION:", "Human:", "User:"]  # Stop tokens
+            num_predict=800,  # Reduced to prevent long repetitive outputs
+            repeat_penalty=1.2,  # Penalize repetition
+            stop=STOP_SEQUENCES
         )
         
         # Chat model for conversational interactions
@@ -50,11 +66,43 @@ class OllamaClient:
             model=self.model,
             base_url=self.base_url,
             temperature=self.temperature,
-            num_predict=1024,
-            stop=["</s>", "[/INST]", "\n\nQuestion:", "\n\nQUESTION:", "Human:", "User:"]
+            num_predict=800,
+            repeat_penalty=1.2,
+            stop=STOP_SEQUENCES
         )
         
         logger.info("Ollama client initialized", model=self.model, base_url=self.base_url)
+    
+    def _clean_response(self, text: str) -> str:
+        """Clean up model response to remove artifacts and repetition."""
+        if not text:
+            return text
+        
+        # Remove any remaining source markers the model might output
+        text = re.sub(r'\[Source:.*?\]', '', text)
+        text = re.sub(r'\[Web:.*?\]', '', text)
+        text = re.sub(r'\[Page:.*?\]', '', text)
+        text = re.sub(r'\[Document:.*?\]', '', text)
+        
+        # Detect and remove repeated paragraphs
+        paragraphs = text.split('\n\n')
+        seen = set()
+        unique_paragraphs = []
+        for p in paragraphs:
+            p_normalized = ' '.join(p.split()).lower()
+            if p_normalized and p_normalized not in seen:
+                seen.add(p_normalized)
+                unique_paragraphs.append(p)
+        
+        text = '\n\n'.join(unique_paragraphs)
+        
+        # Remove trailing incomplete sentences
+        if text and not text.rstrip().endswith(('.', '!', '?', ':', ';')):
+            last_period = max(text.rfind('.'), text.rfind('!'), text.rfind('?'))
+            if last_period > len(text) * 0.7:  # Only trim if we keep most of the content
+                text = text[:last_period + 1]
+        
+        return text.strip()
     
     async def check_health(self) -> Dict[str, Any]:
         """Check if Ollama server is healthy and model is available."""
@@ -127,10 +175,11 @@ class OllamaClient:
             **kwargs: Additional generation parameters
             
         Returns:
-            Generated text
+            Generated text (cleaned)
         """
         try:
-            return await self.llm.ainvoke(prompt, **kwargs)
+            result = await self.llm.ainvoke(prompt, **kwargs)
+            return self._clean_response(result)
         except Exception as e:
             logger.error("Async generation failed", error=str(e))
             raise
@@ -219,7 +268,7 @@ class OllamaClient:
         
         try:
             response = await self.chat_model.ainvoke(langchain_messages)
-            return response.content
+            return self._clean_response(response.content)
         except Exception as e:
             logger.error("Async chat failed", error=str(e))
             raise

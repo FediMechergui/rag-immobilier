@@ -36,6 +36,10 @@ aiohttp==3.9.1
 # Caching
 redis==5.0.1
 
+# Task Queue (Celery + RabbitMQ)
+celery==5.3.4
+kombu==5.3.4
+
 # Data Validation
 pydantic==2.5.3
 pydantic-settings==2.1.0

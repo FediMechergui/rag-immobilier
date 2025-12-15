@@ -137,7 +137,19 @@ async def query_stream(
             if web_sources:
                 all_sources.extend(web_sources)
             
-            yield f"data: {json.dumps({'chunk': '', 'done': True, 'sources': [s.model_dump() for s in all_sources], 'processing_time_ms': processing_time_ms})}\n\n"
+            # Convert sources to JSON-serializable format (UUIDs to strings)
+            sources_data = []
+            for s in all_sources:
+                source_dict = s.model_dump()
+                # Convert UUID to string if present
+                if 'document_id' in source_dict and source_dict['document_id'] is not None:
+                    source_dict['document_id'] = str(source_dict['document_id'])
+                # Convert datetime to ISO string if present
+                if 'retrieved_date' in source_dict and source_dict['retrieved_date'] is not None:
+                    source_dict['retrieved_date'] = source_dict['retrieved_date'].isoformat()
+                sources_data.append(source_dict)
+            
+            yield f"data: {json.dumps({'chunk': '', 'done': True, 'sources': sources_data, 'processing_time_ms': processing_time_ms})}\n\n"
             
         except Exception as e:
             logger.error("Stream generation failed", error=str(e))

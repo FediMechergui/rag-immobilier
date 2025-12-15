@@ -276,32 +276,97 @@ function MessageBubble({ message, onFeedback, onCopy, copiedId }: MessageBubbleP
     <Box
       className="message-animate"
       sx={{
-        display: 'flex',
-        justifyContent: isUser ? 'flex-end' : 'flex-start',
+        display: "flex",
+        justifyContent: isUser ? "flex-end" : "flex-start",
       }}
     >
       <Paper
         elevation={0}
         sx={{
-          maxWidth: '80%',
+          maxWidth: "80%",
           p: 2,
           borderRadius: 2,
-          backgroundColor: isUser ? 'primary.main' : 'background.paper',
-          color: isUser ? 'white' : 'text.primary',
-          border: isUser ? 'none' : '1px solid',
-          borderColor: 'divider',
+          backgroundColor: isUser ? "primary.main" : "background.paper",
+          color: isUser ? "white" : "text.primary",
+          border: isUser ? "none" : "1px solid",
+          borderColor: "divider",
         }}
       >
         {/* Message Content */}
         <Box className="markdown-content">
           {message.isStreaming && !message.content ? (
-            <Box sx={{ display: 'flex', gap: 0.5 }}>
-              <Box className="loading-dot" sx={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: 'currentColor' }} />
-              <Box className="loading-dot" sx={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: 'currentColor' }} />
-              <Box className="loading-dot" sx={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: 'currentColor' }} />
+            <Box sx={{ display: "flex", gap: 0.5 }}>
+              <Box
+                className="loading-dot"
+                sx={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  backgroundColor: "currentColor",
+                }}
+              />
+              <Box
+                className="loading-dot"
+                sx={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  backgroundColor: "currentColor",
+                }}
+              />
+              <Box
+                className="loading-dot"
+                sx={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  backgroundColor: "currentColor",
+                }}
+              />
             </Box>
           ) : (
-            <ReactMarkdown>{message.content}</ReactMarkdown>
+            <>
+              <ReactMarkdown>{message.content}</ReactMarkdown>
+              {/* Bibliography at the end if sources exist */}
+              {message.sources &&
+                message.sources.length > 0 &&
+                !message.isStreaming && (
+                  <Box sx={{ mt: 2 }}>
+                    <Typography
+                      variant="subtitle2"
+                      sx={{ fontWeight: 600, mb: 0.5 }}
+                    >
+                      {t("chat.sources") || "Ressources"}
+                    </Typography>
+                    <ol style={{ paddingLeft: 20, margin: 0 }}>
+                      {message.sources.map((source, idx) => (
+                        <li key={idx} style={{ marginBottom: 4 }}>
+                          <span style={{ fontWeight: 500 }}>
+                            {source.source_type === "web" ? "🌐 Web" : "📄 PDF"}
+                          </span>{" "}
+                          <span>
+                            {source.document_name}
+                            {source.page_number
+                              ? `, page ${source.page_number}`
+                              : ""}
+                          </span>
+                          {source.score !== undefined && (
+                            <span
+                              style={{
+                                color: "#888",
+                                marginLeft: 8,
+                                fontSize: "0.85em",
+                              }}
+                            >
+                              ({(source.score * 100).toFixed(0)}% pertinence)
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ol>
+                  </Box>
+                )}
+            </>
           )}
         </Box>
 
@@ -309,7 +374,7 @@ function MessageBubble({ message, onFeedback, onCopy, copiedId }: MessageBubbleP
         {message.webSearchUsed && (
           <Chip
             icon={<LanguageIcon />}
-            label={t('chat.webSearch')}
+            label={t("chat.webSearch")}
             size="small"
             color="secondary"
             variant="outlined"
@@ -319,35 +384,47 @@ function MessageBubble({ message, onFeedback, onCopy, copiedId }: MessageBubbleP
 
         {/* Actions (for assistant messages) */}
         {!isUser && message.content && !message.isStreaming && (
-          <Box sx={{ mt: 1.5, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+          <Box
+            sx={{
+              mt: 1.5,
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              flexWrap: "wrap",
+            }}
+          >
             {/* Copy Button */}
             <Tooltip title="Copy">
               <IconButton
                 size="small"
                 onClick={() => onCopy(message.content, message.id)}
-                sx={{ color: 'text.secondary' }}
+                sx={{ color: "text.secondary" }}
               >
-                {copiedId === message.id ? <CheckIcon fontSize="small" /> : <CopyIcon fontSize="small" />}
+                {copiedId === message.id ? (
+                  <CheckIcon fontSize="small" />
+                ) : (
+                  <CopyIcon fontSize="small" />
+                )}
               </IconButton>
             </Tooltip>
 
             {/* Feedback Buttons */}
             {message.queryId && (
               <>
-                <Tooltip title={t('chat.feedback.helpful')}>
+                <Tooltip title={t("chat.feedback.helpful")}>
                   <IconButton
                     size="small"
                     onClick={() => onFeedback(message.queryId!, true)}
-                    sx={{ color: 'text.secondary' }}
+                    sx={{ color: "text.secondary" }}
                   >
                     <ThumbUpIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
-                <Tooltip title={t('chat.feedback.notHelpful')}>
+                <Tooltip title={t("chat.feedback.notHelpful")}>
                   <IconButton
                     size="small"
                     onClick={() => onFeedback(message.queryId!, false)}
-                    sx={{ color: 'text.secondary' }}
+                    sx={{ color: "text.secondary" }}
                   >
                     <ThumbDownIcon fontSize="small" />
                   </IconButton>
@@ -361,9 +438,9 @@ function MessageBubble({ message, onFeedback, onCopy, copiedId }: MessageBubbleP
                 size="small"
                 onClick={() => setShowSources(!showSources)}
                 endIcon={showSources ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                sx={{ ml: 'auto' }}
+                sx={{ ml: "auto" }}
               >
-                {t('chat.sources')} ({message.sources.length})
+                {t("chat.sources")} ({message.sources.length})
               </Button>
             )}
           </Box>

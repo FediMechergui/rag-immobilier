@@ -74,6 +74,12 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ragpassword}
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-raguser}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-ragpassword}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - HF_MODEL=${HF_MODEL:-sentence-transformers/paraphrase-multilingual-mpnet-base-v2}
     depends_on:
       postgres:
@@ -82,6 +88,8 @@ services:
         condition: service_started
       ollama:
         condition: service_started
+      rabbitmq:
+        condition: service_healthy
     restart: unless-stopped
 
   # React Frontend
@@ -106,11 +114,66 @@ services:
       - redis_data:/data
     restart: unless-stopped
 
+  # RabbitMQ - Message Broker for Celery
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: immobilier-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"  # Management UI
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-raguser}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-ragpassword}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Celery Worker - Background Task Processing
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: immobilier-celery-worker
+    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=2 -Q documents,training
+    volumes:
+      - ./backend:/app
+      - ./uploads:/app/uploads
+    environment:
+      - OLLAMA_HOST=ollama
+      - OLLAMA_PORT=11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-immobilier_rag}
+      - POSTGRES_USER=${POSTGRES_USER:-raguser}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ragpassword}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-raguser}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-ragpassword}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - HF_MODEL=${HF_MODEL:-sentence-transformers/paraphrase-multilingual-mpnet-base-v2}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   ollama_data:
   postgres_data:
   chroma_data:
   redis_data:
+  rabbitmq_data:
 
 networks:
   default:

@@ -1,13 +1,14 @@
 """
 Documents API Endpoints
 Handles document upload, listing, and deletion.
+Supports both sync (FastAPI background tasks) and async (Celery) processing.
 """
 import os
 import shutil
 import time
-from typing import List
+from typing import List, Optional
 from uuid import UUID, uuid4
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
 import structlog
@@ -27,12 +28,21 @@ settings = get_settings()
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
+# Try to import Celery tasks (may fail if RabbitMQ not available)
+try:
+    from app.tasks.document_tasks import process_document_task, delete_document_task, reindex_document_task
+    CELERY_AVAILABLE = True
+except Exception:
+    CELERY_AVAILABLE = False
+    logger.warning("Celery tasks not available, using FastAPI background tasks")
+
+
 async def process_document_background(
     doc_id: UUID,
     file_path: str,
     original_filename: str
 ):
-    """Background task to process uploaded document."""
+    """Background task to process uploaded document (non-Celery fallback)."""
     from app.models.database import AsyncSessionLocal
     
     pdf_processor = get_pdf_processor()
@@ -40,12 +50,29 @@ async def process_document_background(
     
     async with AsyncSessionLocal() as db:
         try:
+            # Update status to processing
+            result = await db.execute(
+                select(Document).where(Document.id == doc_id)
+            )
+            doc = result.scalar_one_or_none()
+            if doc:
+                doc.doc_metadata = {**(doc.doc_metadata or {}), "status": "processing"}
+                await db.commit()
+            
             # Process PDF
             chunks, doc_metadata = pdf_processor.process_pdf(file_path, original_filename)
             
             if not chunks:
                 logger.warning("No chunks extracted", doc_id=str(doc_id))
+                if doc:
+                    doc.doc_metadata = {**(doc.doc_metadata or {}), "status": "error", "error": "No text extracted"}
+                    await db.commit()
                 return
+            
+            # Update status
+            if doc:
+                doc.doc_metadata = {**(doc.doc_metadata or {}), "status": "generating_embeddings"}
+                await db.commit()
             
             # Generate embeddings in batches
             chunk_texts = [c.content for c in chunks]
@@ -73,7 +100,12 @@ async def process_document_background(
                 doc.processed = True
                 doc.page_count = doc_metadata.get("page_count", 0)
                 doc.language = doc_metadata.get("language", "fr")
-                doc.doc_metadata = doc_metadata
+                doc.doc_metadata = {
+                    **(doc_metadata or {}),
+                    "status": "ready",
+                    "chunk_count": len(chunks),
+                    "total_tokens": sum(c.token_count for c in chunks)
+                }
             
             await db.commit()
             logger.info(
@@ -91,12 +123,15 @@ async def process_document_background(
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    use_celery: bool = Query(default=True, description="Use Celery for background processing"),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Upload a PDF document for processing.
     
-    The document will be processed asynchronously.
+    The document will be processed asynchronously using either:
+    - Celery workers (if available and use_celery=True)
+    - FastAPI background tasks (fallback)
     """
     start_time = time.time()
     
@@ -148,18 +183,42 @@ async def upload_document(
         filename=safe_filename,
         original_filename=file.filename,
         file_size=file_size,
-        processed=False
+        processed=False,
+        doc_metadata={"status": "queued"}
     )
     db.add(document)
     await db.commit()
     
-    # Schedule background processing
-    background_tasks.add_task(
-        process_document_background,
-        doc_id,
-        file_path,
-        file.filename
-    )
+    # Schedule processing
+    task_id = None
+    if use_celery and CELERY_AVAILABLE:
+        try:
+            # Use Celery for background processing
+            task = process_document_task.delay(
+                str(doc_id),
+                file_path,
+                safe_filename,
+                file.filename,
+                "fr"  # Default language
+            )
+            task_id = task.id
+            logger.info("Document queued for Celery processing", doc_id=str(doc_id), task_id=task_id)
+        except Exception as e:
+            logger.warning(f"Celery task failed, falling back to background task: {e}")
+            background_tasks.add_task(
+                process_document_background,
+                doc_id,
+                file_path,
+                file.filename
+            )
+    else:
+        # Use FastAPI background tasks
+        background_tasks.add_task(
+            process_document_background,
+            doc_id,
+            file_path,
+            file.filename
+        )
     
     processing_time_ms = int((time.time() - start_time) * 1000)
     

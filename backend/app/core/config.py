@@ -62,6 +62,16 @@ class Settings(BaseSettings):
     def redis_url(self) -> str:
         return f"redis://{self.redis_host}:{self.redis_port}"
     
+    # RabbitMQ Settings
+    rabbitmq_host: str = Field(default="rabbitmq", env="RABBITMQ_HOST")
+    rabbitmq_port: int = Field(default=5672, env="RABBITMQ_PORT")
+    rabbitmq_user: str = Field(default="raguser", env="RABBITMQ_USER")
+    rabbitmq_password: str = Field(default="ragpassword", env="RABBITMQ_PASSWORD")
+    
+    @property
+    def rabbitmq_url(self) -> str:
+        return f"amqp://{self.rabbitmq_user}:{self.rabbitmq_password}@{self.rabbitmq_host}:{self.rabbitmq_port}//"
+    
     # RAG Settings
     chunk_size: int = Field(default=800, env="RAG_CHUNK_SIZE")
     chunk_overlap: int = Field(default=150, env="RAG_CHUNK_OVERLAP")
