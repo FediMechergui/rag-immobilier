@@ -186,15 +186,14 @@ async def health_check():
         ))
         overall_status = "unhealthy"
     
-    # Check ChromaDB
+    # Check ChromaDB (optional — not used for primary vector search, pgvector handles that)
     try:
         start = time.time()
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            # Try v2 API first (newer ChromaDB versions), fallback to v1
+        async with httpx.AsyncClient(timeout=3.0) as client:
             try:
                 response = await client.get(f"{settings.chroma_url}/api/v2/heartbeat")
                 response.raise_for_status()
-            except:
+            except Exception:
                 response = await client.get(f"{settings.chroma_url}/api/v1/heartbeat")
                 response.raise_for_status()
         latency = int((time.time() - start) * 1000)
@@ -203,15 +202,15 @@ async def health_check():
             name="chromadb",
             status="healthy",
             latency_ms=latency,
-            details={"host": settings.chroma_host}
+            details={"host": settings.chroma_host, "note": "optional — not used for primary vector search"}
         ))
     except Exception as e:
         services.append(ServiceHealth(
             name="chromadb",
-            status="unhealthy",
-            details={"error": str(e)}
+            status="degraded",
+            details={"error": str(e), "note": "optional service — pgvector handles vector search"}
         ))
-        overall_status = "degraded" if overall_status == "healthy" else overall_status
+        # ChromaDB is optional; don't degrade or fail overall health
     
     # Check Ollama
     try:

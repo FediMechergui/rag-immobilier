@@ -67,7 +67,7 @@ def process_feedback_task(
                     language=query.sources[0].get("language", "fr") if query.sources else "fr",
                     rating=rating,
                     used_count=0,
-                    metadata={
+                    example_metadata={
                         "source_query_id": str(query_id),
                         "auto_generated": True,
                         "user_rating": rating
@@ -127,7 +127,7 @@ def create_training_example_task(
             language=language,
             rating=5,  # Manual examples are considered high quality
             used_count=0,
-            metadata={
+            example_metadata={
                 "manual": True,
                 "tags": tags or []
             }
@@ -197,13 +197,92 @@ def generate_synthetic_examples_task(
     Returns:
         Generation result
     """
-    # This would use the LLM to generate Q&A pairs
-    # For now, return a placeholder
-    return {
-        "success": True,
-        "message": "Synthetic example generation not yet implemented",
-        "generated": 0
-    }
+    from app.core.ollama_client import get_ollama_client
+    from app.models.database import Chunk, Document
+    
+    db = SyncSessionLocal()
+    try:
+        ollama = get_ollama_client()
+        
+        # Get chunks to generate examples from
+        query = db.query(Chunk).join(Document)
+        if document_id:
+            query = query.filter(Chunk.document_id == UUID(document_id))
+        
+        # Select diverse chunks (skip very short ones)
+        chunks = query.filter(Chunk.token_count > 50).order_by(
+            Chunk.id  # deterministic ordering
+        ).limit(count * 2).all()
+        
+        if not chunks:
+            return {"success": False, "error": "No suitable chunks found"}
+        
+        generated = 0
+        for chunk in chunks[:count]:
+            # Build a prompt asking the LLM to generate a Q&A pair
+            generation_prompt = f"""Tu es un expert en immobilier français. À partir de l'extrait suivant, génère UNE question pertinente et sa réponse idéale.
+
+EXTRAIT:
+{chunk.content[:1500]}
+
+Réponds EXACTEMENT dans ce format JSON (rien d'autre):
+{{"question": "...", "answer": "..."}}
+
+JSON:"""
+            
+            try:
+                raw = ollama.generate(generation_prompt)
+                # Try to parse the JSON from the response
+                import json as _json
+                import re
+                # Find JSON object in the response
+                match = re.search(r'\{[^{}]*"question"\s*:\s*"[^"]+"\s*,\s*"answer"\s*:\s*"[^"]+"\s*\}', raw, re.DOTALL)
+                if not match:
+                    # Try a more lenient parse
+                    match = re.search(r'\{.*?\}', raw, re.DOTALL)
+                
+                if match:
+                    parsed = _json.loads(match.group())
+                    question = parsed.get("question", "").strip()
+                    answer = parsed.get("answer", "").strip()
+                    
+                    if question and answer and len(question) > 10 and len(answer) > 20:
+                        # Detect language from the chunk
+                        from langdetect import detect
+                        try:
+                            lang = detect(chunk.content[:500])
+                            lang = lang if lang in ("fr", "en", "ar") else "fr"
+                        except Exception:
+                            lang = "fr"
+                        
+                        example = TrainingExample(
+                            question=question,
+                            context=chunk.content[:500],
+                            ideal_answer=answer,
+                            language=lang,
+                            rating=3,  # synthetic = moderate quality
+                            used_count=0,
+                            example_metadata={
+                                "synthetic": True,
+                                "source_document_id": str(chunk.document_id),
+                                "source_chunk_id": str(chunk.id),
+                            }
+                        )
+                        db.add(example)
+                        generated += 1
+            except Exception as e:
+                logger.warning(f"Failed to generate synthetic example: {e}")
+                continue
+        
+        db.commit()
+        return {"success": True, "generated": generated}
+    
+    except Exception as e:
+        db.rollback()
+        return {"success": False, "error": str(e)}
+    
+    finally:
+        db.close()
 
 
 @celery_app.task(name="app.tasks.training_tasks.cleanup_low_quality_examples")
@@ -220,7 +299,7 @@ def cleanup_low_quality_examples_task() -> Dict[str, Any]:
         # Delete examples with rating < 3 and no manual flag
         deleted = db.query(TrainingExample).filter(
             TrainingExample.rating < 3,
-            TrainingExample.metadata["manual"].astext != "true"
+            TrainingExample.example_metadata["manual"].astext != "true"
         ).delete(synchronize_session=False)
         
         db.commit()

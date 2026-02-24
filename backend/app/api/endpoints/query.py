@@ -21,7 +21,7 @@ from app.models.schemas import (
     FeedbackResponse
 )
 from app.services.rag_pipeline import get_rag_pipeline
-from app.services.web_search import get_web_search_service
+from app.services.web_scraper import get_web_scraping_service
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -47,8 +47,8 @@ async def query(
     # Perform web search if enabled
     if request.use_web_search and settings.web_search_enabled:
         try:
-            web_search_service = get_web_search_service()
-            web_sources = await web_search_service.search(db, request.question)
+            web_scraping_service = get_web_scraping_service()
+            web_sources = await web_scraping_service.search(db, request.question)
         except Exception as e:
             logger.warning("Web search failed", error=str(e))
     
@@ -86,19 +86,24 @@ async def query_stream(
     # Perform web search if enabled
     if request.use_web_search and settings.web_search_enabled:
         try:
-            web_search_service = get_web_search_service()
-            web_sources = await web_search_service.search(db, request.question)
+            web_scraping_service = get_web_scraping_service()
+            web_sources = await web_scraping_service.search(db, request.question)
         except Exception as e:
             logger.warning("Web search failed", error=str(e))
     
     async def generate_stream():
         """Generate SSE stream."""
         try:
-            # Get retrieval results first
+            # Detect language first (needed for bilingual context formatting)
+            language = request.language or rag_pipeline.detect_language(request.question)
+
+            # Get retrieval results (hybrid: vector + keyword + RRF + re-rank)
             chunks_with_scores = await rag_pipeline.retrieve_chunks(
                 db, request.question, request.top_k
             )
-            context, doc_sources = rag_pipeline.format_context(chunks_with_scores)
+            context, doc_sources = rag_pipeline.format_context(
+                chunks_with_scores, language
+            )
             
             # Debug: Log retrieved chunks
             logger.info(
@@ -112,8 +117,7 @@ async def query_stream(
                 } for s in doc_sources[:3]]  # Log top 3
             )
             
-            # Build prompt
-            language = request.language or rag_pipeline.detect_language(request.question)
+            # Build prompt (language already detected above)
             prompt = rag_pipeline.build_prompt(request.question, context, language)
             
             # Debug: Log prompt length

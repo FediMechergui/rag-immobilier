@@ -39,9 +39,11 @@ CREATE TABLE IF NOT EXISTS training_examples (
     question TEXT NOT NULL,
     context TEXT,
     ideal_answer TEXT NOT NULL,
+    language VARCHAR(10) DEFAULT 'fr',
     rating INTEGER CHECK (rating >= 1 AND rating <= 5),
     feedback TEXT,
     used_count INTEGER DEFAULT 0,
+    example_metadata JSONB DEFAULT '{}',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -79,6 +81,35 @@ CREATE INDEX IF NOT EXISTS idx_web_cache_expires ON web_search_cache(expires_at)
 
 -- Vector similarity search index (IVFFlat for approximate nearest neighbor)
 CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+-- =============================================================================
+-- Full-text search support for hybrid retrieval (BM25-style keyword search)
+-- =============================================================================
+
+-- Add tsvector column for full-text search (French + English)
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_tsv tsvector;
+
+-- Populate tsvector from content (combined French + English for bilingual retrieval)
+UPDATE chunks SET content_tsv = setweight(to_tsvector('french', content), 'A')
+                             || setweight(to_tsvector('english', content), 'B')
+WHERE content_tsv IS NULL;
+
+-- GIN index for fast full-text search
+CREATE INDEX IF NOT EXISTS idx_chunks_content_tsv ON chunks USING gin(content_tsv);
+
+-- Trigger to auto-populate tsvector on insert/update (combined FR + EN for bilingual search)
+CREATE OR REPLACE FUNCTION chunks_tsv_trigger()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.content_tsv := setweight(to_tsvector('french',  COALESCE(NEW.content, '')), 'A')
+                    || setweight(to_tsvector('english', COALESCE(NEW.content, '')), 'B');
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_chunks_tsv ON chunks;
+CREATE TRIGGER trg_chunks_tsv BEFORE INSERT OR UPDATE OF content ON chunks
+    FOR EACH ROW EXECUTE FUNCTION chunks_tsv_trigger();
 
 -- Function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()

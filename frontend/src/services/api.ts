@@ -117,8 +117,24 @@ class ApiClient {
   }
 
   async getDocuments(): Promise<Document[]> {
-    const response = await this.client.get<Document[]>('/documents/');
-    return response.data;
+    const response = await this.client.get<
+      { documents: Document[]; total: number } | Document[]
+    >("/documents/");
+    // Backend returns { documents: [...], total: N } — unwrap if needed
+    const data = response.data;
+    if (Array.isArray(data)) {
+      return data;
+    }
+    // Map backend DocumentResponse to frontend Document shape
+    return (data.documents || []).map((doc: any) => ({
+      id: doc.id,
+      filename: doc.original_filename || doc.filename,
+      status:
+        doc.doc_metadata?.status || (doc.processed ? "ready" : "processing"),
+      chunk_count: doc.doc_metadata?.chunk_count || 0,
+      created_at: doc.upload_date || doc.created_at,
+      error_message: doc.doc_metadata?.error,
+    }));
   }
 
   async getDocument(id: string): Promise<Document> {
