@@ -64,7 +64,7 @@ services:
     environment:
       - OLLAMA_HOST=ollama
       - OLLAMA_PORT=11434
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:0.5b}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-immobilier_rag}
@@ -144,7 +144,7 @@ services:
     environment:
       - OLLAMA_HOST=ollama
       - OLLAMA_PORT=11434
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:0.5b}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-immobilier_rag}

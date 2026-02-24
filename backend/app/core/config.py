@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # Ollama Settings
     ollama_host: str = Field(default="ollama", env="OLLAMA_HOST")
     ollama_port: int = Field(default=11434, env="OLLAMA_PORT")
-    ollama_model: str = Field(default="mistral", env="OLLAMA_MODEL")
+    ollama_model: str = Field(default="qwen2.5:0.5b", env="OLLAMA_MODEL")
     
     @property
     def ollama_base_url(self) -> str:
